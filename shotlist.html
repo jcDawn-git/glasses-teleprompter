@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Shot List HUD</title>
+<style>
+  :root{
+    --bg:#000;
+    --fg:#fff;
+    --dim:rgba(255,255,255,.55);
+    --faint:rgba(255,255,255,.22);
+    --accent:#4da3ff;
+    --good:#3ddc84;
+    --warn:#ffb020;
+    --flag:#ff5d5d;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{
+    margin:0;padding:0;height:100%;background:var(--bg);color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    overscroll-behavior:none;
+  }
+  body{touch-action:manipulation;}
+  .view{position:fixed;inset:0;display:flex;flex-direction:column;background:var(--bg);}
+  .hidden{display:none !important;}
+
+  /* ---------- HUD ---------- */
+  #topbar{
+    flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;
+    padding:10px 16px;border-bottom:1px solid rgba(255,255,255,.12);
+    font-size:15px;color:var(--dim);user-select:none;-webkit-user-select:none;
+  }
+  #progress{font-variant-numeric:tabular-nums;font-weight:700;color:var(--fg);}
+  #progressBar{flex:0 0 auto;height:3px;background:rgba(255,255,255,.12);}
+  #progressFill{height:100%;width:0%;background:var(--good);}
+  #stage{flex:1 1 auto;display:flex;flex-direction:column;overflow:hidden;min-height:0;}
+  #currentCard{
+    flex:0 0 auto;padding:18px 20px 14px 20px;
+    border-bottom:1px solid rgba(255,255,255,.12);
+  }
+  #shotNum{font-size:15px;font-weight:700;letter-spacing:.14em;color:var(--accent);margin-bottom:6px;}
+  #shotDesc{font-size:40px;font-weight:700;line-height:1.2;margin:0 0 8px 0;}
+  #shotNotes{font-size:17px;color:var(--dim);line-height:1.45;margin:0;}
+  #shotMeta{display:flex;gap:10px;align-items:center;margin-top:10px;}
+  .pill{
+    font-size:13px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+    border:1px solid var(--faint);border-radius:999px;padding:5px 12px;color:var(--dim);
+  }
+  .pill.doing{color:var(--accent);border-color:var(--accent);}
+  .pill.done{color:var(--good);border-color:var(--good);}
+  .pill.flagged{color:var(--flag);border-color:var(--flag);}
+  #flagBadge{display:none;}
+  #flagBadge.on{display:inline-block;}
+  #shotList{
+    flex:1 1 auto;overflow-y:auto;min-height:0;outline:none;
+    -webkit-overflow-scrolling:touch;
+    touch-action:pan-y;
+    user-select:none;-webkit-user-select:none;
+  }
+  #shotList:focus{box-shadow:inset 0 0 0 3px rgba(77,163,255,.65);}
+  .row{
+    display:flex;align-items:center;gap:12px;
+    padding:13px 18px;border-bottom:1px solid rgba(255,255,255,.07);
+    font-size:18px;
+  }
+  .row .n{
+    flex:0 0 44px;font-weight:700;color:var(--dim);font-variant-numeric:tabular-nums;
+  }
+  .row .d{flex:1 1 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .row .st{flex:0 0 auto;font-size:20px;width:30px;text-align:center;}
+  .row.done{color:var(--faint);}
+  .row.done .n{color:var(--faint);}
+  .row.selected{background:rgba(77,163,255,.14);box-shadow:inset 4px 0 0 var(--accent);}
+  .row .flagmark{color:var(--flag);font-size:16px;}
+  #wrapped{
+    flex:1 1 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:12px;color:var(--good);
+  }
+  #wrapped .big{font-size:64px;}
+  #wrapped .sub{font-size:20px;font-weight:700;letter-spacing:.1em;}
+  #wrapped .hint{font-size:15px;color:var(--dim);}
+  #controls{
+    flex:0 0 auto;display:flex;gap:10px;justify-content:center;align-items:center;
+    padding:12px 12px calc(12px + env(safe-area-inset-bottom));
+    border-top:1px solid rgba(255,255,255,.12);
+    user-select:none;-webkit-user-select:none;
+  }
+  .btn{
+    flex:1 1 0;max-width:120px;min-height:64px;border-radius:14px;
+    border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.08);
+    color:var(--fg);font-size:20px;font-weight:700;cursor:pointer;
+  }
+  .btn:active{background:rgba(255,255,255,.2);}
+  .btn.primary{background:var(--good);border-color:var(--good);color:#000;font-size:24px;max-width:140px;}
+  .btn.warn{color:var(--warn);}
+  .btn.small{font-size:14px;font-weight:600;color:var(--dim);max-width:90px;}
+  .btn:focus{outline:3px solid var(--accent);outline-offset:3px;}
+
+  /* ---------- Editor ---------- */
+  #editor{padding:20px;overflow-y:auto;-webkit-overflow-scrolling:touch;}
+  #editor h1{font-size:24px;margin:0 0 6px 0;}
+  #editor p.hint{color:var(--dim);font-size:14px;line-height:1.5;margin:0 0 16px 0;}
+  #editor label{display:block;font-size:13px;color:var(--dim);margin:14px 0 6px 0;text-transform:uppercase;letter-spacing:.08em;}
+  #shotsInput{
+    width:100%;min-height:34vh;resize:vertical;background:#111;color:var(--fg);
+    border:1px solid rgba(255,255,255,.25);border-radius:12px;padding:14px;
+    font-size:16px;line-height:1.5;font-family:ui-monospace,Menlo,Consolas,monospace;
+  }
+  #editor .actions{display:flex;gap:10px;margin-top:18px;flex-wrap:wrap;}
+  #editor .actions .btn{max-width:none;font-size:16px;min-height:54px;padding:0 16px;flex:1 1 40%;}
+  #editor .btn:focus{outline:3px solid var(--accent);outline-offset:2px;}
+  #shotsInput:focus{outline:3px solid var(--accent);outline-offset:2px;}
+  #linkOut{
+    width:100%;margin-top:14px;background:#111;color:var(--accent);
+    border:1px dashed rgba(77,163,255,.5);border-radius:10px;padding:12px;
+    font-size:13px;word-break:break-all;display:none;
+  }
+  #copied{color:#3ddc84;font-size:14px;margin-top:8px;display:none;}
+  #shotCount{color:var(--dim);font-size:14px;margin-top:10px;}
+  kbd{background:#222;border:1px solid #444;border-radius:6px;padding:1px 7px;font-size:13px;}
+</style>
+</head>
+<body>
+
+<!-- ============ HUD ============ -->
+<div id="hudView" class="view">
+  <div id="topbar">
+    <span id="listName">SHOT LIST</span>
+    <span id="progress">0 / 0</span>
+  </div>
+  <div id="progressBar"><div id="progressFill"></div></div>
+  <div id="stage">
+    <div id="currentCard">
+      <div id="shotNum">SHOT 1</div>
+      <p id="shotDesc">—</p>
+      <p id="shotNotes"></p>
+      <div id="shotMeta">
+        <span class="pill" id="statusPill">Not started</span>
+        <span class="pill flagged" id="flagBadge">&#9873; Flagged</span>
+      </div>
+    </div>
+    <div id="shotList" tabindex="0" title="Shot list: swipe up/down to move, tap for done"></div>
+    <div id="wrapped" class="hidden">
+      <div class="big">&#10003;</div>
+      <div class="sub">WRAPPED</div>
+      <div class="hint">Every shot is done. Export the log from the editor.</div>
+    </div>
+  </div>
+  <div id="controls">
+    <button class="btn small" id="btnEditHud" title="Edit list">&#9998;</button>
+    <button class="btn" id="btnUndo" title="Undo">&#8617;</button>
+    <button class="btn warn" id="btnFlag" title="Flag for reshoot">&#9873;</button>
+    <button class="btn primary" id="btnDone" title="Mark done">&#10003;</button>
+  </div>
+</div>
+
+<!-- ============ EDITOR ============ -->
+<div id="editorView" class="view hidden">
+  <div id="editor">
+    <h1>Shot List Editor</h1>
+    <p class="hint">
+      One shot per line: <kbd>number | description | notes</kbd> (notes optional).
+      Example: <kbd>3 | Medium, owner interview | 50mm, lav, key light</kbd><br><br>
+      On the glasses: swipe moves the highlight, tap presses. On the shot list,
+      up/down swipes move between shots, tap marks the highlighted shot done
+      and advances, left/right swipes jump back to the buttons. <kbd>F</kbd> flags,
+      <kbd>U</kbd> undoes.
+    </p>
+    <label for="shotsInput">Shots</label>
+    <textarea id="shotsInput" placeholder="1 | Wide establishing, storefront | 24mm, tripod&#10;2 | Gimbal walk-in | 24-70mm"></textarea>
+    <div id="shotCount"></div>
+    <div class="actions">
+      <button class="btn primary" id="btnSaveList">Save &amp; Start</button>
+      <button class="btn" id="btnSample">Load sample</button>
+      <button class="btn" id="btnLink">Copy glasses link</button>
+      <button class="btn" id="btnExport">Export JSON</button>
+      <button class="btn warn" id="btnReset">Reset all</button>
+    </div>
+    <div id="copied">Link copied. Add it as a web app in the Meta AI app: Settings &gt; App Connections &gt; Web Apps.</div>
+    <div id="linkOut"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var LS_KEY = "glasses-shotlist-v1";
+
+  var SAMPLE = [
+    "1 | Wide establishing, storefront at golden hour | 24mm, tripod, 8s hold",
+    "2 | Gimbal walk-in through front door | 24-70mm, gimbal, one take",
+    "3 | Medium, owner interview | 50mm, lav mic, key light",
+    "4 | Close-up, hands at work | 100mm macro, tripod",
+    "5 | Product detail, slider left to right | 50mm, slider",
+    "6 | Team candid, natural light | 35mm, handheld",
+    "7 | Drone orbit, exterior | drone, 4K60",
+    "8 | Logo sign close-up | 85mm, shallow depth of field"
+  ].join("\n");
+
+  var state = { shots: [], sel: 0, history: [] };
+
+  var hudView = document.getElementById("hudView");
+  var editorView = document.getElementById("editorView");
+  var shotList = document.getElementById("shotList");
+  var wrapped = document.getElementById("wrapped");
+  var currentCard = document.getElementById("currentCard");
+  var shotNum = document.getElementById("shotNum");
+  var shotDesc = document.getElementById("shotDesc");
+  var shotNotes = document.getElementById("shotNotes");
+  var statusPill = document.getElementById("statusPill");
+  var flagBadge = document.getElementById("flagBadge");
+  var progressLabel = document.getElementById("progress");
+  var progressFill = document.getElementById("progressFill");
+  var btnDone = document.getElementById("btnDone");
+  var btnFlag = document.getElementById("btnFlag");
+  var btnUndo = document.getElementById("btnUndo");
+  var shotsInput = document.getElementById("shotsInput");
+  var shotCount = document.getElementById("shotCount");
+
+  function enc(s){ return btoa(unescape(encodeURIComponent(s))); }
+  function dec(s){ return decodeURIComponent(escape(atob(s))); }
+  function escHtml(s){
+    return s.replace(/&/g,"&amp;").replace(/</g,"&lt;")
+            .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  }
+  function uid(){ return "s" + Date.now().toString(36) + Math.floor(Math.random()*1e6).toString(36); }
+
+  function parseLines(text){
+    var shots = [];
+    var lines = text.split("\n");
+    for(var i=0;i<lines.length;i++){
+      var line = lines[i].trim();
+      if(!line) continue;
+      var parts = line.split("|");
+      var n = parts[0] ? parts[0].trim() : String(shots.length+1);
+      var desc = parts[1] ? parts[1].trim() : (parts[0] ? parts[0].trim() : "");
+      var notes = parts[2] ? parts[2].trim() : "";
+      if(!desc) continue;
+      shots.push({ id: uid()+i, n: n, desc: desc, notes: notes,
+                   status: "todo", flagged: false, doneAt: null });
+    }
+    return shots;
+  }
+
+  function snapshot(){
+    state.history.push(JSON.stringify({ shots: state.shots, sel: state.sel }));
+    if(state.history.length > 60) state.history.shift();
+  }
+  function undo(){
+    if(!state.history.length) return false;
+    var s = JSON.parse(state.history.pop());
+    state.shots = s.shots; state.sel = s.sel;
+    save(); render();
+    return true;
+  }
+
+  function doneCount(){
+    var c = 0, i;
+    for(i=0;i<state.shots.length;i++) if(state.shots[i].status === "done") c++;
+    return c;
+  }
+  function clampSel(){
+    if(!state.shots.length){ state.sel = 0; return; }
+    state.sel = Math.min(Math.max(0, state.sel), state.shots.length-1);
+  }
+  function nextOpen(from){
+    var i;
+    for(i=from;i<state.shots.length;i++) if(state.shots[i].status !== "done") return i;
+    for(i=0;i<from;i++) if(state.shots[i].status !== "done") return i;
+    return -1;
+  }
+
+  function markDone(){
+    if(!state.shots.length) return;
+    var s = state.shots[state.sel];
+    if(!s || s.status === "done"){ advance(); return; }
+    snapshot();
+    s.status = "done";
+    s.doneAt = Date.now();
+    var nx = nextOpen(state.sel + 1);
+    state.sel = (nx >= 0) ? nx : state.sel;
+    save(); render();
+  }
+  function advance(){
+    var nx = nextOpen(state.sel + 1);
+    if(nx >= 0){ state.sel = nx; save(); render(); }
+  }
+  function goBack(){
+    if(state.sel > 0){ state.sel = state.sel - 1; save(); render(); }
+  }
+  function toggleFlag(){
+    if(!state.shots.length) return;
+    snapshot();
+    var s = state.shots[state.sel];
+    s.flagged = !s.flagged;
+    save(); render();
+  }
+  function moveSel(dir){
+    if(!state.shots.length) return;
+    state.sel = (state.sel + dir + state.shots.length) % state.shots.length;
+    save(); render();
+  }
+  function resetStatuses(){
+    snapshot();
+    var i;
+    for(i=0;i<state.shots.length;i++){
+      state.shots[i].status = "todo";
+      state.shots[i].flagged = false;
+      state.shots[i].doneAt = null;
+    }
+    state.sel = 0;
+    save(); render();
+  }
+
+  function statusIcon(s){
+    if(s.status === "done") return "&#10003;";
+    return "&#9675;";
+  }
+
+  function render(){
+    clampSel();
+    var total = state.shots.length;
+    var done = doneCount();
+    progressLabel.textContent = done + " / " + total;
+    progressFill.style.width = (total ? (100*done/total) : 0) + "%";
+
+    var allDone = total > 0 && done === total;
+    wrapped.classList.toggle("hidden", !allDone);
+    currentCard.style.display = allDone ? "none" : "";
+    shotList.style.display = allDone ? "none" : "";
+
+    if(!total){
+      shotNum.textContent = "NO SHOTS";
+      shotDesc.textContent = "Add shots in the editor";
+      shotNotes.textContent = "";
+      statusPill.textContent = "Empty";
+      statusPill.className = "pill";
+      flagBadge.classList.remove("on");
+      shotList.innerHTML = "";
+      return;
+    }
+    if(allDone) return;
+
+    var cur = state.shots[state.sel];
+    shotNum.textContent = "SHOT " + cur.n;
+    shotDesc.textContent = cur.desc;
+    shotNotes.textContent = cur.notes || "";
+    if(cur.status === "done"){ statusPill.textContent = "Done"; statusPill.className = "pill done"; }
+    else { statusPill.textContent = "Not started"; statusPill.className = "pill"; }
+    flagBadge.classList.toggle("on", !!cur.flagged);
+
+    var html = "", i, s;
+    for(i=0;i<state.shots.length;i++){
+      s = state.shots[i];
+      html += '<div class="row' + (s.status==="done" ? " done" : "") + (i===state.sel ? " selected" : "") + '">' +
+        '<span class="st">' + statusIcon(s) + "</span>" +
+        '<span class="n">' + escHtml(s.n) + "</span>" +
+        '<span class="d">' + escHtml(s.desc) + (s.flagged ? ' <span class="flagmark">&#9873;</span>' : "") + "</span>" +
+        "</div>";
+    }
+    shotList.innerHTML = html;
+
+    var rows = shotList.children;
+    if(rows[state.sel]){
+      var row = rows[state.sel];
+      var target = row.offsetTop - (shotList.clientHeight/2) + (row.offsetHeight/2);
+      shotList.scrollTop = Math.max(0, target);
+    }
+  }
+
+  function save(){
+    try{
+      localStorage.setItem(LS_KEY, JSON.stringify({ shots: state.shots, sel: state.sel }));
+    }catch(e){}
+  }
+  function load(){
+    try{
+      var raw = localStorage.getItem(LS_KEY);
+      if(!raw) return false;
+      var o = JSON.parse(raw);
+      if(o.shots && o.shots.length){ state.shots = o.shots; state.sel = o.sel || 0; return true; }
+    }catch(e){}
+    return false;
+  }
+  function loadHash(){
+    if(location.hash.length < 2) return false;
+    var p;
+    try{ p = new URLSearchParams(location.hash.slice(1)); }
+    catch(e){ return false; }
+    if(!p.has("s")) return false;
+    try{
+      var o = JSON.parse(dec(p.get("s")));
+      if(o.shots && o.shots.length){ state.shots = o.shots; state.sel = 0; return true; }
+    }catch(e){}
+    return false;
+  }
+
+  function showEditor(){
+    shotsInput.value = state.shots.map(function(s){
+      return s.n + " | " + s.desc + (s.notes ? " | " + s.notes : "");
+    }).join("\n");
+    updateCount();
+    hudView.classList.add("hidden");
+    editorView.classList.remove("hidden");
+  }
+  function showHud(){
+    editorView.classList.add("hidden");
+    hudView.classList.remove("hidden");
+    render();
+    if(btnDone.focus) btnDone.focus();
+  }
+  function updateCount(){
+    var n = parseLines(shotsInput.value).length;
+    shotCount.textContent = n + (n === 1 ? " shot" : " shots");
+  }
+
+  function buildLink(){
+    var payload = enc(JSON.stringify({ shots: parseLines(shotsInput.value) }));
+    var base = location.href.split("#")[0];
+    return base + "#s=" + encodeURIComponent(payload);
+  }
+  function copyLink(){
+    var link = buildLink();
+    var done = function(){
+      var out = document.getElementById("linkOut");
+      out.style.display = "block";
+      out.textContent = link;
+      document.getElementById("copied").style.display = "block";
+    };
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(link).then(done).catch(done);
+    }else{
+      var ta = document.createElement("textarea");
+      ta.value = link; document.body.appendChild(ta); ta.select();
+      try{ document.execCommand("copy"); }catch(e){}
+      document.body.removeChild(ta); done();
+    }
+  }
+  function exportJSON(){
+    var data = {
+      exportedAt: new Date().toISOString(),
+      total: state.shots.length,
+      done: doneCount(),
+      shots: state.shots
+    };
+    var blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "shotlist-log.json";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function(){ document.body.removeChild(a); }, 500);
+  }
+
+  /* ---- input: buttons ---- */
+  btnDone.addEventListener("click", function(e){ e.stopPropagation(); markDone(); });
+  btnFlag.addEventListener("click", function(e){ e.stopPropagation(); toggleFlag(); });
+  btnUndo.addEventListener("click", function(e){ e.stopPropagation(); undo(); });
+  document.getElementById("btnEditHud").addEventListener("click", function(e){ e.stopPropagation(); showEditor(); });
+  document.getElementById("btnSaveList").addEventListener("click", function(){
+    var shots = parseLines(shotsInput.value);
+    if(shots.length){
+      snapshot();
+      state.shots = shots;
+      state.sel = 0;
+      save();
+    }
+    showHud();
+  });
+  document.getElementById("btnSample").addEventListener("click", function(){
+    shotsInput.value = SAMPLE;
+    updateCount();
+  });
+  document.getElementById("btnLink").addEventListener("click", copyLink);
+  document.getElementById("btnExport").addEventListener("click", exportJSON);
+  document.getElementById("btnReset").addEventListener("click", function(){
+    resetStatuses();
+    showHud();
+  });
+  shotsInput.addEventListener("input", updateCount);
+
+  /* ---- input: Neural Band model — swipes = arrows, tap = Enter ---- */
+  function controlButtons(){
+    return Array.prototype.slice.call(document.querySelectorAll("#controls .btn"));
+  }
+  function focusButton(btns, from, dir){
+    var i = btns.indexOf(from);
+    var n = btns[(i + dir + btns.length) % btns.length];
+    if(n) n.focus();
+  }
+  document.addEventListener("keydown", function(e){
+    if(!editorView.classList.contains("hidden")){
+      if(e.key === "Escape") showHud();
+      return;
+    }
+    var btns = controlButtons();
+    var ae = document.activeElement;
+    var bi = btns.indexOf(ae);
+    var onList = (ae === shotList);
+
+    if(e.key === "Enter" || e.key === " "){
+      if(bi >= 0) return; /* focused button: native click */
+      e.preventDefault();
+      markDone();
+      return;
+    }
+    if(e.key === "ArrowUp" || e.key === "ArrowDown"){
+      e.preventDefault();
+      var up = (e.key === "ArrowUp");
+      if(bi >= 0){
+        if(up) shotList.focus();
+        else focusButton(btns, ae, 1);
+      }else{
+        moveSel(up ? -1 : 1);
+        if(!onList) shotList.focus();
+      }
+      return;
+    }
+    if(e.key === "ArrowLeft" || e.key === "ArrowRight"){
+      e.preventDefault();
+      if(bi >= 0) focusButton(btns, ae, e.key === "ArrowRight" ? 1 : -1);
+      else if(btnDone.focus) btnDone.focus();
+      return;
+    }
+    if(e.key === "f" || e.key === "F"){ toggleFlag(); return; }
+    if(e.key === "u" || e.key === "U"){ undo(); return; }
+    if(e.key === "Home"){ e.preventDefault(); goBack(); return; }
+  });
+
+  /* touch: tap list row toggles selection, tap current card marks done */
+  var tSX=0, tSY=0, tST=0;
+  function touchStart(e){
+    var t = e.changedTouches[0]; tSX=t.clientX; tSY=t.clientY; tST=Date.now();
+  }
+  function touchEnd(e, onTap){
+    var t = e.changedTouches[0];
+    var dx = t.clientX - tSX, dy = t.clientY - tSY;
+    if(Math.max(Math.abs(dx),Math.abs(dy)) < 24 && (Date.now()-tST) < 400) onTap();
+  }
+  currentCard.addEventListener("touchstart", touchStart, {passive:true});
+  currentCard.addEventListener("touchend", function(e){ touchEnd(e, markDone); }, {passive:true});
+  shotList.addEventListener("touchstart", touchStart, {passive:true});
+  shotList.addEventListener("touchend", function(e){
+    var t = e.changedTouches[0];
+    var dx = t.clientX - tSX, dy = t.clientY - tSY;
+    if(Math.max(Math.abs(dx),Math.abs(dy)) < 24 && (Date.now()-tST) < 400){
+      var el = document.elementFromPoint(t.clientX, t.clientY);
+      var row = el ? el.closest(".row") : null;
+      if(row){
+        var rows = Array.prototype.slice.call(shotList.children);
+        var i = rows.indexOf(row);
+        if(i >= 0){ state.sel = i; save(); render(); }
+      }
+    }
+  }, {passive:true});
+
+  /* ---- boot ---- */
+  var fromLink = loadHash();
+  if(!fromLink && !load()){
+    state.shots = parseLines(SAMPLE);
+    state.sel = 0;
+    save();
+  }
+  render();
+  if(btnDone.focus) btnDone.focus();
+})();
+</script>
+</body>
+</html>
